@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"strconv"
 	"time"
 )
@@ -21,8 +20,10 @@ type (
 	}
 
 	WorkerConfig struct {
-		MaxWorkers int64
-		MaxJobs    int64
+		MaxWorkers      int64
+		QueueSize       int64
+		RateLimitPerSec int64
+		BatchSize       int64
 	}
 
 	ExternalService struct {
@@ -39,13 +40,15 @@ func NewConfig() *Config {
 			Port:    getEnvStr("PORT", "8080"),
 		},
 		WorkerConfig{
-			MaxWorkers: getEnvInt64("SESSION_TOKEN_LENGTH", int64(runtime.GOMAXPROCS(0))),
-			MaxJobs:    getEnvInt64("SESSION_TOKEN_LENGTH", 1000000),
+			MaxWorkers:      getEnvInt64("MAX_WORKERS", 3),
+			QueueSize:       getEnvInt64("MAX_JOBS", 1000),
+			RateLimitPerSec: getEnvInt64("RATE_LIMIT", 5),
+			BatchSize:       getEnvInt64("BATCH_SIZE", 100),
 		},
 		ExternalService{
 			Host:    getEnvStr("SERVER_HOST", "http://localhost"),
 			Port:    getEnvStr("SERVER_PORT", "6969"),
-			Timeout: time.Duration(getEnvInt64("SERVER_TIMEOUT", 60*2)) * time.Second,
+			Timeout: time.Duration(getEnvInt64("SERVER_TIMEOUT", 3)) * time.Second,
 		},
 	}
 }

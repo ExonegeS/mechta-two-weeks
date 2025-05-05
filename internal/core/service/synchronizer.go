@@ -2,17 +2,26 @@ package service
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 	"sync"
 	"time"
+
+	"log/slog"
+
+	"golang.org/x/time/rate"
 
 	"github.com/ExonegeS/mechta-two-weeks/config"
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/domain"
 )
 
 type EntityDataProvider interface {
-	GetUserData(ttl time.Duration) (domain.Data, error)
+	GetFinalPriceInfo(ctx context.Context, reqObj *domain.ImportModelReq) ([]*domain.ImportModelRep, error)
+	GetPromotionsInfo(ctx context.Context) ([]*domain.ImportPromotionsRep, error)
+	GetExportData(ctx context.Context, operation string) (*domain.PromotionsGetInfoRepSt, error)
+}
+
+type Result struct {
+	Data []*domain.ImportModelRep
+	Err  error
 }
 
 type SyncService struct {
@@ -22,76 +31,91 @@ type SyncService struct {
 	entityDataAPI EntityDataProvider
 }
 
-func NewSyncService(cfg config.WorkerConfig, logger *slog.Logger, timeSource func() time.Time, entityDataAPI EntityDataProvider) *SyncService {
-	return &SyncService{
-		cfg,
-		logger,
-		timeSource,
-		entityDataAPI,
+func NewSyncService(
+	cfg config.WorkerConfig,
+	logger *slog.Logger,
+	timeSource func() time.Time,
+	api EntityDataProvider,
+) *SyncService {
+	return &SyncService{cfg, logger, timeSource, api}
+}
+
+func (s *SyncService) GetData(
+	ctx context.Context,
+	subdivisionId string,
+	calculationTime time.Time,
+	products []*domain.BasePrice,
+) ([]*domain.ImportModelRep, error) {
+	limiter := rate.NewLimiter(rate.Limit(s.cfg.RateLimitPerSec), 1)
+
+	batchSize := int(s.cfg.BatchSize)
+	if batchSize < 1 {
+		batchSize = len(products)
 	}
-}
 
-func (s *SyncService) GetData(ctx context.Context, id int64) (*domain.Data, error) {
-	// Create workers
-	s.logger.Info("Starting batch processing with synchronized result collection...")
-	dispatcher(int(s.cfg.MaxJobs), int(s.cfg.MaxWorkers))
-
-	data, err := s.entityDataAPI.GetUserData(time.Hour)
-	if err != nil {
-		return nil, err
-	}
-	return &data, err
-}
-
-type Job struct {
-	ID    int
-	Value int
-}
-
-type Result struct {
-	JobID  int
-	Square int
-}
-
-func worker(id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for job := range jobs {
-		results <- Result{JobID: job.ID, Square: job.Value * job.Value}
-	}
-}
-
-func collectResults(results <-chan Result, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for result := range results {
-		fmt.Printf("Job ID: %d, Input: %d, Squared Value: %d\n", result.JobID, result.JobID, result.Square)
-	}
-}
-
-func dispatcher(jobCount, workerCount int) {
-	jobs := make(chan Job, jobCount)
-	results := make(chan Result, jobCount)
-
+	totalBatches := (len(products) + batchSize - 1) / batchSize
+	jobs := make(chan *domain.ImportModelReq, totalBatches)
+	results := make(chan Result, totalBatches)
 	var wg sync.WaitGroup
 
-	// Start workers
-	wg.Add(workerCount)
-	for w := 1; w <= workerCount; w++ {
-		go worker(w, jobs, results, &wg)
+	numWorkers := int(s.cfg.MaxWorkers)
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for req := range jobs {
+				if err := limiter.Wait(ctx); err != nil {
+					results <- Result{nil, err}
+					continue
+				}
+
+				data, err := s.entityDataAPI.GetFinalPriceInfo(ctx, req)
+				results <- Result{Data: data, Err: err}
+			}
+		}()
 	}
 
-	// Start collecting results
-	var resultsWg sync.WaitGroup
-	resultsWg.Add(1)
-	go collectResults(results, &resultsWg)
+	go func() {
+		for i := 0; i < len(products); i += batchSize {
+			high := i + batchSize
+			if high > len(products) {
+				high = len(products)
+			}
+			chunk := products[i:high]
+			req := &domain.ImportModelReq{
+				SubdivisionId:   subdivisionId,
+				CalculationTime: calculationTime,
+				Products:        chunk,
+			}
+			select {
+			case jobs <- req:
+			case <-ctx.Done():
+				break
+			}
+		}
+		close(jobs)
+	}()
 
-	// Distribute jobs and wait for completion
-	for j := 1; j <= jobCount; j++ {
-		jobs <- Job{ID: j, Value: j}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var combined []*domain.ImportModelRep
+	for res := range results {
+		if res.Err != nil {
+			s.logger.Error("GetData worker error", slog.String("err", res.Err.Error()))
+			continue
+		}
+		combined = append(combined, res.Data...)
 	}
-	close(jobs)
-	wg.Wait()
-	close(results)
 
-	// Ensure all results are collected
-	resultsWg.Wait()
+	return combined, nil
 }
+
+/*
+in case of error return errors
+*/

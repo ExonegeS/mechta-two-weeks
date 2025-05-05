@@ -6,13 +6,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/domain"
 	"github.com/ExonegeS/mechta-two-weeks/internal/utils"
 )
 
 type WorkerService interface {
-	GetData(ctx context.Context, id int64) (*domain.Data, error)
+	GetData(ctx context.Context, subdivisionId string, calculationTime time.Time, products []*domain.BasePrice) ([]*domain.ImportModelRep, error)
 }
 
 type WorkerHandler struct {
@@ -32,6 +33,9 @@ func (h *WorkerHandler) RegisterEndpoints(mux *http.ServeMux) {
 	mux.HandleFunc("GET /hello", h.HelloFunc)
 	mux.HandleFunc("GET /err", h.ErrorFunc)
 	mux.HandleFunc("GET /data/{id}", h.GetData)
+	// id подразделения, массив структур base price
+	// record timeSince
+	//
 }
 
 func (h *WorkerHandler) RootFunc(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +89,39 @@ func (h *WorkerHandler) GetData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := h.workerService.GetData(r.Context(), int64(id))
+	data, err := h.workerService.GetData(r.Context(),
+		"5",
+		time.Now(),
+		[]*domain.BasePrice{
+			&domain.BasePrice{
+				"93",
+				13.7,
+			},
+			&domain.BasePrice{
+				"93",
+				13.7,
+			},
+			&domain.BasePrice{
+				"93",
+				13.7,
+			},
+			&domain.BasePrice{
+				"93",
+				13.7,
+			},
+			&domain.BasePrice{
+				"93",
+				13.7,
+			},
+			&domain.BasePrice{
+				"93",
+				13.7,
+			},
+			&domain.BasePrice{
+				"93",
+				13.7,
+			},
+		})
 	if err != nil {
 		h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
 		utils.WriteError(w, http.StatusInternalServerError, fmt.Errorf("cannot access data with id %d", id))
