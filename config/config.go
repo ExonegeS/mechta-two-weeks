@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
 )
@@ -38,8 +39,8 @@ func NewConfig() *Config {
 			Port:    getEnvStr("PORT", "8080"),
 		},
 		WorkerConfig{
-			MaxWorkers: getEnvInt64("SESSION_TOKEN_LENGTH", 10),
-			MaxJobs:    getEnvInt64("SESSION_TOKEN_LENGTH", 1000),
+			MaxWorkers: getEnvInt64("SESSION_TOKEN_LENGTH", int64(runtime.GOMAXPROCS(0))),
+			MaxJobs:    getEnvInt64("SESSION_TOKEN_LENGTH", 1000000),
 		},
 		ExternalService{
 			Host:    getEnvStr("SERVER_HOST", "http://localhost"),

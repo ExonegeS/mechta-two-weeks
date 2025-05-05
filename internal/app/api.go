@@ -29,7 +29,7 @@ func (s *APIServer) Run() error {
 	mux := http.NewServeMux()
 
 	entityProvider := syncserver.NewEntityProvider(s.cfg.ExternalService.MakeAddressString(), s.cfg.ExternalService.Timeout)
-	workerService := service.NewSyncService(s.cfg.WorkerConfig, time.Now, entityProvider)
+	workerService := service.NewSyncService(s.cfg.WorkerConfig, s.logger, time.Now, entityProvider)
 	SessionHandler := handlers.NewWorkerHandler(s.logger, workerService)
 	SessionHandler.RegisterEndpoints(mux)
 
