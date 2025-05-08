@@ -21,7 +21,6 @@ type (
 
 	WorkerConfig struct {
 		MaxWorkers      int64
-		QueueSize       int64
 		RateLimitPerSec int64
 		BatchSize       int64
 	}
@@ -41,9 +40,8 @@ func NewConfig() *Config {
 		},
 		WorkerConfig{
 			MaxWorkers:      getEnvInt64("MAX_WORKERS", 3),
-			QueueSize:       getEnvInt64("MAX_JOBS", 1000),
 			RateLimitPerSec: getEnvInt64("RATE_LIMIT", 5),
-			BatchSize:       getEnvInt64("BATCH_SIZE", 100),
+			BatchSize:       getEnvInt64("BATCH_SIZE", 3000),
 		},
 		ExternalService{
 			Host:    getEnvStr("SERVER_HOST", "http://localhost"),

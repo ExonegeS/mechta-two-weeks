@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/ExonegeS/mechta-two-weeks/config"
@@ -30,14 +29,17 @@ func NewAPIServer(config *config.Config, logger *slog.Logger) *APIServer {
 func (s *APIServer) Run() error {
 	mux := http.NewServeMux()
 
-	entityProvider := mind_box.New(&domain.OptionsSt{
-		Timeout:       s.cfg.ExternalService.Timeout,
-		Uri:           s.cfg.ExternalService.MakeAddressString(),
-		Params:        url.Values{},
-		Headers:       http.Header{},
-		RetryCount:    3,
-		RetryInterval: 100 * time.Millisecond,
-	})
+	opts := &domain.OptionsSt{
+		Timeout:            s.cfg.ExternalService.Timeout,
+		Uri:                s.cfg.ExternalService.MakeAddressString(),
+		RetryCount:         5,
+		InsecureSkipVerify: false,
+	}
+
+	entityProvider, err := mind_box.New(opts, mind_box.NewCircuitBreaker(5, 15*time.Second))
+	if err != nil {
+		return err
+	}
 	workerService := service.NewSyncService(s.cfg.WorkerConfig, s.logger, time.Now, entityProvider)
 	SessionHandler := handlers.NewWorkerHandler(s.logger, workerService)
 	SessionHandler.RegisterEndpoints(mux)

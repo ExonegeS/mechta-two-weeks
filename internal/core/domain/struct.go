@@ -12,34 +12,18 @@ type OptionsSt struct {
 	Params  url.Values
 	Headers http.Header
 
-	RetryCount    int
-	RetryInterval time.Duration
+	RetryCount         int
+	RetryInterval      time.Duration
+	InsecureSkipVerify bool
 }
 
 func (o *OptionsSt) Normalize() {
 	if o.Timeout == 0 {
 		o.Timeout = 15 * time.Second
 	}
-}
-
-// sendHttpRequest
-
-type HttpRequest struct {
-	Uri     string // joins to base OptionsSt.Uri
-	Method  string
-	Params  url.Values
-	Headers http.Header
-	Body    []byte
-}
-
-type HttpResponse struct {
-	StatusCode int
-	Body       []byte
-}
-
-func (m *HttpResponse) Reset() {
-	m.StatusCode = 0
-	m.Body = nil
+	if o.RetryCount < 0 {
+		o.RetryCount = 0
+	}
 }
 
 // SubdivisionGetInfo

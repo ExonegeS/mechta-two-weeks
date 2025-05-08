@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/domain"
@@ -13,18 +12,20 @@ import (
 )
 
 type WorkerService interface {
-	GetData(ctx context.Context, subdivisionId string, calculationTime time.Time, products []*domain.BasePrice) ([]*domain.ImportModelRep, error)
+	GetData(ctx context.Context, subdivisionId string, calculationTime time.Time, products []*domain.BasePrice) ([]*domain.ImportModelRep, []*domain.BasePrice, error)
 }
 
 type WorkerHandler struct {
 	logger        *slog.Logger
 	workerService WorkerService
+	semaphore     chan struct{}
 }
 
 func NewWorkerHandler(logger *slog.Logger, workerService WorkerService) *WorkerHandler {
 	return &WorkerHandler{
 		logger:        logger,
 		workerService: workerService,
+		semaphore:     make(chan struct{}, 1),
 	}
 }
 
@@ -82,56 +83,67 @@ func (h *WorkerHandler) ErrorFunc(w http.ResponseWriter, r *http.Request) {
 func (h *WorkerHandler) GetData(w http.ResponseWriter, r *http.Request) {
 	const op = "WorkerHandler.GetData"
 
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	h.logger.Debug("Semaphore acquired")
+	h.semaphore <- struct{}{}
+	defer func() {
+		<-h.semaphore
+		h.logger.Debug("Semaphore released")
+	}()
+
+	start := time.Now()
+
+	id := r.PathValue("id")
+
+	type request struct {
+		Items []*struct {
+			ProductId string  `json:"product_id"`
+			Price     float64 `json:"price"`
+		} `json:"item_list"`
+	}
+	var req request
+	err := utils.ParseJSON(r, &req)
 	if err != nil {
 		h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
-		utils.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid data ID format"))
+		utils.WriteError(w, http.StatusBadRequest, fmt.Errorf("invalid payload"))
 		return
+	}
+	items := make([]*domain.BasePrice, len(req.Items))
+	for i, item := range req.Items {
+		items[i] = &domain.BasePrice{
+			ProductId: item.ProductId,
+			Price:     item.Price,
+		}
 	}
 
-	data, err := h.workerService.GetData(r.Context(),
-		"5",
+	data, failed, err := h.workerService.GetData(
+		r.Context(),
+		id,
 		time.Now(),
-		[]*domain.BasePrice{
-			&domain.BasePrice{
-				"93",
-				13.7,
-			},
-			&domain.BasePrice{
-				"93",
-				13.7,
-			},
-			&domain.BasePrice{
-				"93",
-				13.7,
-			},
-			&domain.BasePrice{
-				"93",
-				13.7,
-			},
-			&domain.BasePrice{
-				"93",
-				13.7,
-			},
-			&domain.BasePrice{
-				"93",
-				13.7,
-			},
-			&domain.BasePrice{
-				"93",
-				13.7,
-			},
-		})
+		items,
+	)
 	if err != nil {
-		h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
-		utils.WriteError(w, http.StatusInternalServerError, fmt.Errorf("cannot access data with id %d", id))
+		h.logger.Error("HandlerError",
+			slog.String("operation", op),
+			slog.String("error", err.Error()))
+		utils.WriteError(w, http.StatusInternalServerError,
+			fmt.Errorf("cannot access data with id %s", id))
 		return
 	}
+	fmt.Printf("%v items/hour\n", float64(len(items))/time.Since(start).Hours())
 	utils.WriteJSON(w, http.StatusOK, struct {
-		ID    int64 `json:id`
-		Value any   `json:value`
+		ID              string `json:"id"`
+		TotalProcessed  int    `json:"total_processed"`
+		TotalFailed     int    `json:"total_failed"`
+		ProcessDuration string `json:"process_duration"`
+
+		Processed any                 `json:"processed"`
+		Failed    []*domain.BasePrice `json:"failed"`
 	}{
-		ID:    int64(id),
-		Value: data,
+		ID:              id,
+		TotalProcessed:  len(data),
+		TotalFailed:     len(failed),
+		Processed:       data,
+		Failed:          failed,
+		ProcessDuration: time.Since(start).String(),
 	})
 }

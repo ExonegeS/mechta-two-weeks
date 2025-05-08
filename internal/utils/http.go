@@ -3,7 +3,10 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 )
 
 func ParseJSON(r *http.Request, v any) error {
@@ -25,4 +28,22 @@ func WriteMessage(w http.ResponseWriter, status int, msg string) {
 
 func WriteError(w http.ResponseWriter, status int, err error) {
 	WriteJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func ParseTime(str *string) *time.Time {
+	if str == nil || *str == "" {
+		return nil
+	}
+
+	s := *str
+	if !strings.HasSuffix(s, "Z") {
+		s += "Z"
+	}
+
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		slog.Error("time parse error", "error", err, "input", s)
+		return nil
+	}
+	return &t
 }

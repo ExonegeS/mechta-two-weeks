@@ -7,8 +7,6 @@ import (
 
 	"log/slog"
 
-	"golang.org/x/time/rate"
-
 	"github.com/ExonegeS/mechta-two-weeks/config"
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/domain"
 )
@@ -20,6 +18,7 @@ type EntityDataProvider interface {
 }
 
 type Result struct {
+	Req  *domain.ImportModelReq
 	Data []*domain.ImportModelRep
 	Err  error
 }
@@ -45,8 +44,8 @@ func (s *SyncService) GetData(
 	subdivisionId string,
 	calculationTime time.Time,
 	products []*domain.BasePrice,
-) ([]*domain.ImportModelRep, error) {
-	limiter := rate.NewLimiter(rate.Limit(s.cfg.RateLimitPerSec), 1)
+) (processed []*domain.ImportModelRep, failed []*domain.BasePrice, err error) {
+	// limiter := rate.NewLimiter(rate.Limit(s.cfg.RateLimitPerSec), 3)
 
 	batchSize := int(s.cfg.BatchSize)
 	if batchSize < 1 {
@@ -67,12 +66,16 @@ func (s *SyncService) GetData(
 		go func() {
 			defer wg.Done()
 			for req := range jobs {
-				if err := limiter.Wait(ctx); err != nil {
-					results <- Result{nil, err}
-					continue
-				}
+				// if err := limiter.Wait(ctx); err != nil {
+				// 	results <- Result{Req: req, Err: err}
+				// 	continue
+				// }
 
 				data, err := s.entityDataAPI.GetFinalPriceInfo(ctx, req)
+				if err != nil {
+					results <- Result{Req: req, Err: err}
+					continue
+				}
 				results <- Result{Data: data, Err: err}
 			}
 		}()
@@ -104,18 +107,15 @@ func (s *SyncService) GetData(
 		close(results)
 	}()
 
-	var combined []*domain.ImportModelRep
 	for res := range results {
 		if res.Err != nil {
 			s.logger.Error("GetData worker error", slog.String("err", res.Err.Error()))
+			failed = append(failed, res.Req.Products...)
 			continue
 		}
-		combined = append(combined, res.Data...)
+		s.logger.Info("GetData worker success", slog.Int("processed size:", len(res.Data)))
+		processed = append(processed, res.Data...)
 	}
 
-	return combined, nil
+	return processed, failed, nil
 }
-
-/*
-in case of error return errors
-*/

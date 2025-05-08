@@ -1,415 +1,192 @@
-package mind_box
+package mindbox
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
-	"math/rand"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/domain"
+	"github.com/ExonegeS/mechta-two-weeks/internal/utils"
 )
 
 const (
-	PathOperationsSync         = "operations/sync"
+	PathOperationsSync = "operations/sync"
+	// PathOperationsSync         = "switch/games"
 	StatusSuccess              = "Success"
 	ProcessingStatusCalculated = "Calculated"
 )
 
 type Client struct {
-	opts   *domain.OptionsSt
-	client *http.Client
+	apiClient *APIClient
+	opts      *domain.OptionsSt
 }
 
-func New(opts *domain.OptionsSt) *Client {
-	opts.Normalize()
-	return &Client{
-		opts: opts,
-		client: &http.Client{
-			Timeout:   opts.Timeout,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		},
+func New(opts *domain.OptionsSt, cb *CircuitBreaker) (*Client, error) {
+	apiClient, err := NewAPIClient(opts.Uri, opts, cb)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create API client: %w", err)
 	}
+
+	return &Client{
+		apiClient: apiClient,
+		opts:      opts,
+	}, nil
 }
 
 func (c *Client) GetFinalPriceInfo(ctx context.Context, reqObj *domain.ImportModelReq) ([]*domain.ImportModelRep, error) {
-	if c.opts.Uri == "" {
-		return nil, fmt.Errorf("c.GetFinalPriceInfo: mbox client without uri")
-	}
-
 	data := domain.SubdivisionGetInfoReq{}
 	data.Encode(reqObj)
-
-	dataRaw, err := json.Marshal(data)
+	now := time.Now()
+	fmt.Println("Process batch:", now.Format(time.RFC3339))
+	req, err := c.apiClient.NewRequest(http.MethodPost, PathOperationsSync).
+		WithQueryParam("operation", "Shop.GetProductInfo").
+		WithQueryParam("endpointId", "MECHTA").
+		WithJSONBody(data).
+		WithContext(ctx).
+		WithHeader("Authorization", "Mindbox secretKey=\"MECHTA_INTERNSHIP_API_KEY\"").
+		Build()
 	if err != nil {
-		return nil, fmt.Errorf("json.Marshal: %w", err)
-	}
-
-	resp := &domain.HttpResponse{}
-
-	err = c.sendHttpRequestWithRetry(
-		ctx,
-		&domain.HttpRequest{
-			Uri:    PathOperationsSync,
-			Method: http.MethodPost,
-			Params: url.Values{
-				"operation": []string{"Shop.GetProductInfo"},
-			},
-			Body: dataRaw,
-		}, resp, nil, nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("c.sendHttpRequestWithRetry: %w", err)
-	}
-
-	if resp.StatusCode < http.StatusOK ||
-		resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("c.sendHttpRequestWithRetry: %d status code", resp.StatusCode)
+		return nil, err
 	}
 
 	var repObj domain.SubdivisionGetInfoRep
-
-	if len(resp.Body) > 0 && resp.Body != nil {
-		err = json.Unmarshal(resp.Body, &repObj)
-		if err != nil {
-			return nil, fmt.Errorf("json.Unmarshal: %w", err)
-		}
+	if err := c.apiClient.Execute(ctx, req, &repObj); err != nil {
+		return nil, fmt.Errorf("failed to get price info: %w", err)
 	}
 
+	fmt.Println("Processed batch:", time.Since(now))
 	if repObj.Status != StatusSuccess {
-		return nil, fmt.Errorf("bad status")
+		return nil, errors.New("bad status")
 	}
+
 	if repObj.ProductList.ProcessingStatus != ProcessingStatusCalculated {
-		return nil, fmt.Errorf("c.GetFinalPriceInfo: Bad processing status in reply")
+		return nil, errors.New("invalid processing status")
 	}
 
-	result := make([]*domain.ImportModelRep, 0, len(repObj.ProductList.Items))
+	return processProductItems(repObj.ProductList.Items), nil
+}
 
-	for _, item := range repObj.ProductList.Items {
-		if item.Product.Ids.Mechtakz == "" {
-			continue
+func processProductItems(items []*domain.SubdivisionGetInfoRepItem) []*domain.ImportModelRep {
+	result := make([]*domain.ImportModelRep, 0, len(items))
+	for _, item := range items {
+		if item.Product.Ids.Mechtakz != "" {
+			result = append(result, item.Decode())
 		}
-		result = append(result, item.Decode())
 	}
-
-	return result, nil
+	return result
 }
 
 func (c *Client) GetPromotionsInfo(ctx context.Context) ([]*domain.ImportPromotionsRep, error) {
 	resp, err := c.GetExportData(ctx, "EksportDejstvuyushhiePromoakcii")
 	if err != nil {
-		return nil, fmt.Errorf("c.GetExportData: %w", err)
+		return nil, fmt.Errorf("failed to get export data: %w", err)
 	}
 
-	result := make([]*domain.ImportPromotionsRep, len(resp.Promotions))
+	return convertPromotions(resp.Promotions), nil
+}
 
-	for i, promo := range resp.Promotions {
+func convertPromotions(promotions []domain.PromotionSt) []*domain.ImportPromotionsRep {
+	result := make([]*domain.ImportPromotionsRep, len(promotions))
+	for i, promo := range promotions {
 		result[i] = &domain.ImportPromotionsRep{
 			ExternalID: promo.Ids.ExternalID,
 			Name:       promo.Name,
 			SchemaID:   promo.CustomFields.ShemaV1C,
-			StartDate:  c.getTimeFromString(promo.StartDateTimeUtc),
-			EndDate:    c.getTimeFromString(promo.EndDateTimeUtc),
+			StartDate:  utils.ParseTime(promo.StartDateTimeUtc),
+			EndDate:    utils.ParseTime(promo.EndDateTimeUtc),
 		}
 	}
-
-	return result, nil
+	return result
 }
 
-func (c *Client) GetExportData(
-	ctx context.Context,
-	operation string,
-) (*domain.PromotionsGetInfoRepSt, error) {
-	const (
-		retryInterval = 3 * time.Second
-		retryTimeout  = 1 * time.Minute
-	)
-
-	export1Obj, err := c.sendExportRequest(ctx, operation, "")
+func (c *Client) GetExportData(ctx context.Context, operation string) (*domain.PromotionsGetInfoRepSt, error) {
+	exportID, err := c.startExport(ctx, operation)
 	if err != nil {
-		return nil, fmt.Errorf("c.sendExportRequest: %w", err)
-	}
-	if export1Obj.ExportID == "" {
-		slog.Error("empty export_id in reply", "operation", operation)
-		return nil, fmt.Errorf("service not available")
+		return nil, err
 	}
 
-	var (
-		exportFileUrl string
-		export2Obj    *domain.ExportRepSt
-		startTime     = time.Now()
-	)
+	fileURL, err := c.waitForExport(ctx, operation, exportID)
+	if err != nil {
+		return nil, err
+	}
 
-	for {
-		export2Obj, err = c.sendExportRequest(ctx, operation, export1Obj.ExportID)
-		if err != nil {
-			return nil, fmt.Errorf("c.sendExportRequest: %w", err)
-		}
+	return c.fetchExportData(ctx, fileURL)
+}
 
-		if export2Obj.ExportResult.ProcessingStatus != "Ready" {
-			if time.Since(startTime) > retryTimeout {
-				return nil, fmt.Errorf("timeout")
+func (c *Client) startExport(ctx context.Context, operation string) (string, error) {
+	req, err := c.apiClient.NewRequest(http.MethodPost, PathOperationsSync).
+		WithQueryParam("operation", operation).Build()
+	if err != nil {
+		return "", err
+	}
+
+	var response domain.ExportRepSt
+	if err := c.apiClient.Execute(ctx, req, &response); err != nil {
+		return "", err
+	}
+
+	if response.ExportID == "" {
+		return "", errors.New("empty export ID")
+	}
+	return response.ExportID, nil
+}
+
+func (c *Client) waitForExport(ctx context.Context, operation, exportID string) (string, error) {
+	const timeout = 1 * time.Minute
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+			fileURL, done, err := c.checkExportStatus(ctx, operation, exportID)
+			if done {
+				return fileURL, err
 			}
-
-			time.Sleep(retryInterval)
-			continue
-		}
-
-		if len(export2Obj.ExportResult.Urls) <= 0 {
-			slog.Error(
-				"empty export-file url, on 'ready status",
-				"operation", operation,
-				"export_id", export1Obj.ExportID)
-			return nil, fmt.Errorf("service not available")
-		}
-
-		exportFileUrl = export2Obj.ExportResult.Urls[0]
-
-		break
-	}
-
-	var (
-		resp   = &domain.HttpResponse{}
-		repObj = &domain.PromotionsGetInfoRepSt{}
-	)
-
-	err = New(&domain.OptionsSt{
-		Timeout:       20 * time.Second,
-		Uri:           exportFileUrl,
-		RetryCount:    1,
-		RetryInterval: 5 * time.Second,
-	}).sendHttpRequestWithRetry(ctx, &domain.HttpRequest{
-		Method: http.MethodGet,
-	}, resp, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("New.sendHttpRequestWithRetry: %w", err)
-	}
-
-	if resp.StatusCode < http.StatusOK ||
-		resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("New.sendHttpRequestWithRetry: %d status code", resp.StatusCode)
-	}
-
-	if len(resp.Body) > 0 && resp.Body != nil {
-		err = json.Unmarshal(resp.Body, repObj)
-		if err != nil {
-			return nil, fmt.Errorf("json.Unmarshal: %w", err)
+			time.Sleep(3 * time.Second)
 		}
 	}
-
-	return repObj, nil
+	return "", errors.New("export timeout")
 }
 
-func (c *Client) sendExportRequest(
-	ctx context.Context,
-	operation, exportId string,
-) (*domain.ExportRepSt, error) {
-	var (
-		err    error
-		reqObj = make(map[string]string)
-		repObj = &domain.ExportRepSt{}
-	)
-
-	if exportId != "" {
-		reqObj["exportId"] = exportId
-	}
-
-	dataRaw, err := json.Marshal(reqObj)
+func (c *Client) checkExportStatus(ctx context.Context, operation, exportID string) (string, bool, error) {
+	req, err := c.apiClient.NewRequest(http.MethodPost, PathOperationsSync).
+		WithQueryParam("operation", operation).
+		WithJSONBody(map[string]string{"exportId": exportID}).Build()
 	if err != nil {
-		return nil, fmt.Errorf("json.Marshal: %w", err)
+		return "", false, err
 	}
 
-	resp := &domain.HttpResponse{}
-
-	err = c.sendHttpRequestWithRetry(ctx, &domain.HttpRequest{
-		Uri:    PathOperationsSync,
-		Method: http.MethodPost,
-		Params: url.Values{
-			"operation": []string{operation},
-		},
-		Body: dataRaw,
-	}, resp, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("c.sendHttpRequestWithRetry: %w", err)
+	var response domain.ExportRepSt
+	if err := c.apiClient.Execute(ctx, req, &response); err != nil {
+		return "", false, err
 	}
 
-	if resp.StatusCode < http.StatusOK ||
-		resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("c.sendHttpRequestWithRetry: %d status code", resp.StatusCode)
-	}
-
-	if len(resp.Body) > 0 && resp.Body != nil {
-		err = json.Unmarshal(resp.Body, &repObj)
-		if err != nil {
-			return nil, fmt.Errorf("json.Unmarshal: %w", err)
+	if response.ExportResult.ProcessingStatus == "Ready" {
+		if len(response.ExportResult.Urls) == 0 {
+			return "", true, errors.New("no export URLs")
 		}
+		return response.ExportResult.Urls[0], true, nil
 	}
-
-	return repObj, err
+	return "", false, nil
 }
 
-// sendHttpRequest
-
-func (c *Client) sendHttpRequestWithRetry(
-	ctx context.Context,
-	request *domain.HttpRequest,
-	response *domain.HttpResponse,
-	retryCount *int,
-	retryInterval *time.Duration,
-) error {
-	var (
-		err       error
-		rCount    = c.opts.RetryCount
-		rInterval = c.opts.Timeout
-	)
-
-	if retryCount != nil {
-		rCount = *retryCount
-	}
-	if retryInterval != nil {
-		rInterval = *retryInterval
-	}
-
-	for i := rCount; i >= 0; i-- {
-		response.Reset()
-		err = c.sendHttpRequest(ctx, &domain.HttpRequest{
-			Uri:    request.Uri,
-			Method: request.Method,
-			Params: request.Params,
-			Body:   request.Body,
-		}, response)
-		if err == nil {
-			if response.StatusCode > 0 {
-				break
-			}
-		}
-		if i > 0 {
-			fmt.Println(i, rInterval, rCount)
-			time.Sleep(rInterval)
-		}
-	}
+func (c *Client) fetchExportData(ctx context.Context, fileURL string) (*domain.PromotionsGetInfoRepSt, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
-		return fmt.Errorf("c.sendHttpRequest: %w", err)
+		return nil, err
 	}
 
-	return nil
+	var result domain.PromotionsGetInfoRepSt
+	if err := c.apiClient.Execute(ctx, req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
-func (c *Client) sendHttpRequest(
-	ctx context.Context,
-	request *domain.HttpRequest,
-	response *domain.HttpResponse,
-) error {
-	var err error
 
-	var destUri string
-	if request.Uri != "" {
-		destUri, err = url.JoinPath(c.opts.Uri, request.Uri)
-		if err != nil {
-			return fmt.Errorf("url.JoinPath: %w", err)
-		}
-	} else {
-		destUri = c.opts.Uri
-	}
-
-	var req *http.Request
-	if c.opts.Timeout > 0 {
-		ctx, cancel := context.WithTimeout(ctx, c.opts.Timeout)
-		defer cancel()
-		req, err = http.NewRequestWithContext(
-			ctx,
-			request.Method,
-			destUri,
-			bytes.NewReader(request.Body),
-		)
-	} else {
-		req, err = http.NewRequest(
-			request.Method,
-			destUri,
-			bytes.NewReader(request.Body),
-		)
-	}
-	if err != nil {
-		return fmt.Errorf("http.NewRequest: %w", err)
-	}
-
-	headers := c.opts.Headers
-	if headers == nil {
-		headers = http.Header{}
-	}
-	if request.Headers != nil {
-		for k, v := range request.Headers {
-			headers[k] = v
-		}
-	}
-	if request.Body != nil &&
-		len(headers.Values("Content-Type")) == 0 {
-		headers["Content-Type"] = []string{"application/json"}
-	}
-	if len(headers.Values("Accept")) == 0 {
-		headers["Accept"] = []string{"application/json"}
-	}
-	req.Header = headers
-
-	params := c.opts.Params
-	if params == nil {
-		params = url.Values{}
-	}
-	if request.Params != nil {
-		for k, v := range request.Params {
-			params[k] = v
-		}
-	}
-	if len(params) > 0 {
-		req.URL.RawQuery = params.Encode()
-	}
-
-	rand.Seed(time.Now().UnixNano())
-
-	// Simulate request with 80% success, 20% server error
-	if rand.Intn(100) < 20 {
-		// Fake successful response
-		response.StatusCode = http.StatusOK
-		response.Body = []byte(`{"status":"Success","productList":{"processingStatus": "Calculated"}}`)
-		return nil
-	}
-
-	return fmt.Errorf("server down")
-	// resp, err := c.client.Do(req)
-	// if err != nil {
-	// 	return fmt.Errorf("client.Do: %w", err)
-	// }
-	// defer resp.Body.Close()
-
-	// response.StatusCode = resp.StatusCode
-	// response.Body, err = io.ReadAll(resp.Body)
-	// if err != nil {
-	// 	return fmt.Errorf("io.ReadAll: %w", err)
-	// }
-
-	// return nil
-}
-
-func (c *Client) getTimeFromString(str *string) *time.Time {
-	if str == nil || *str == "" {
-		return nil
-	}
-
-	if !strings.HasSuffix(*str, "Z") {
-		*str += "Z"
-	}
-
-	result, err := time.Parse(time.RFC3339, *str)
-	if err != nil {
-		slog.Error("fail to parse time", "err", err, "src", *str)
-		return nil
-	}
-
-	return &result
-}
+// конвеер паттерн
+// паттерны работы многопоточности
