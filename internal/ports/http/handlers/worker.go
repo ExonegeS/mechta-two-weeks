@@ -129,7 +129,7 @@ func (h *WorkerHandler) GetData(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("cannot access data with id %s", id))
 		return
 	}
-	fmt.Printf("%v items/hour\n", float64(len(items))/time.Since(start).Hours())
+	fmt.Printf("max: %v items/hour\nsucceeded: %v items/hour\n", float64(len(items))/time.Since(start).Hours(), float64(len(data))/time.Since(start).Hours())
 	utils.WriteJSON(w, http.StatusOK, struct {
 		ID              string `json:"id"`
 		TotalProcessed  int    `json:"total_processed"`

@@ -153,7 +153,7 @@ func generatePayload(size int) Payload {
 	items := make([]Item, size)
 	for i := 0; i < size; i++ {
 		items[i] = Item{
-			ProductID: fmt.Sprintf("prod-%d", rand.Intn(1000)),
+			ProductID: fmt.Sprintf("prod-%d", rand.Intn(100000)),
 			Price:     rand.Float64() * 100,
 		}
 	}

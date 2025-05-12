@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ExonegeS/mechta-two-weeks/config"
+	"github.com/ExonegeS/mechta-two-weeks/internal/adapters/grpc"
 	mind_box "github.com/ExonegeS/mechta-two-weeks/internal/adapters/mindbox"
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/domain"
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/service"
@@ -43,6 +44,8 @@ func (s *APIServer) Run() error {
 	workerService := service.NewSyncService(s.cfg.WorkerConfig, s.logger, time.Now, entityProvider)
 	SessionHandler := handlers.NewWorkerHandler(s.logger, workerService)
 	SessionHandler.RegisterEndpoints(mux)
+
+	go grpc.StartGRPCServer(s.cfg.Server.GRPCPort, workerService, s.logger)
 
 	MWChain := middleware.NewMiddlewareChain(middleware.RecoveryMW, middleware.NewTimeoutContextMW(120))
 

@@ -35,8 +35,9 @@ type (
 func NewConfig() *Config {
 	return &Config{
 		Server{
-			Address: getEnvStr("ADDRESS", ""),
-			Port:    getEnvStr("PORT", "8080"),
+			Address:  getEnvStr("ADDRESS", ""),
+			Port:     getEnvStr("PORT", "8080"),
+			GRPCPort: getEnvStr("GRPC_PORT", "50051"),
 		},
 		WorkerConfig{
 			MaxWorkers:      getEnvInt64("MAX_WORKERS", 3),
