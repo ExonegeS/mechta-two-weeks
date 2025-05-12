@@ -31,8 +31,8 @@ func NewWorkerHandler(logger *slog.Logger, workerService WorkerService) *WorkerH
 
 func (h *WorkerHandler) RegisterEndpoints(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", h.RootFunc)
-	mux.HandleFunc("GET /hello", h.HelloFunc)
-	mux.HandleFunc("GET /err", h.ErrorFunc)
+	// mux.HandleFunc("GET /hello", h.HelloFunc)
+	// mux.HandleFunc("GET /err", h.ErrorFunc)
 	mux.HandleFunc("GET /data/{id}", h.GetData)
 	// id подразделения, массив структур base price
 	// record timeSince
@@ -52,33 +52,33 @@ func (h *WorkerHandler) RootFunc(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
-func (h *WorkerHandler) HelloFunc(w http.ResponseWriter, r *http.Request) {
-	const op = "WorkerHandler.HelloFunc"
-	var err error
+// func (h *WorkerHandler) HelloFunc(w http.ResponseWriter, r *http.Request) {
+// 	// const op = "WorkerHandler.HelloFunc"
+// 	// var err error
 
-	if err != nil {
-		h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
-		utils.WriteError(w, http.StatusNotImplemented, fmt.Errorf("not implemented"))
-		return
-	}
+// 	// if err != nil {
+// 	// 	h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
+// 	// 	utils.WriteError(w, http.StatusNotImplemented, fmt.Errorf("not implemented"))
+// 	// 	return
+// 	// }
 
-	utils.WriteJSON(w, http.StatusOK, map[string]any{
-		"message": "Hello world!",
-	})
-}
+// 	utils.WriteJSON(w, http.StatusOK, map[string]any{
+// 		"message": "Hello world!",
+// 	})
+// }
 
-func (h *WorkerHandler) ErrorFunc(w http.ResponseWriter, r *http.Request) {
-	const op = "WorkerHandler.ErrorFunc"
+// func (h *WorkerHandler) ErrorFunc(w http.ResponseWriter, r *http.Request) {
+// 	const op = "WorkerHandler.ErrorFunc"
 
-	err := fmt.Errorf("not implemented")
-	if err != nil {
-		h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
-		utils.WriteError(w, http.StatusNotImplemented, fmt.Errorf("not implemented"))
-		return
-	}
+// 	err := fmt.Errorf("not implemented")
+// 	if err != nil {
+// 		h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
+// 		utils.WriteError(w, http.StatusNotImplemented, fmt.Errorf("not implemented"))
+// 		return
+// 	}
 
-	utils.WriteJSON(w, http.StatusOK, map[string]any{})
-}
+// 	utils.WriteJSON(w, http.StatusOK, map[string]any{})
+// }
 
 func (h *WorkerHandler) GetData(w http.ResponseWriter, r *http.Request) {
 	const op = "WorkerHandler.GetData"
