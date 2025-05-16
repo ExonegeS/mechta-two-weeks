@@ -9,43 +9,65 @@ import (
 
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/domain"
 	"github.com/ExonegeS/mechta-two-weeks/internal/utils"
+	"github.com/ExonegeS/mechta-two-weeks/pkg/httpclient"
 )
 
 const (
-	PathOperationsSync = "operations/sync"
-	// PathOperationsSync         = "switch/games"
+	PathOperationsSync         = "operations/sync"
 	StatusSuccess              = "Success"
 	ProcessingStatusCalculated = "Calculated"
 )
 
+type ConfigSt struct {
+	Timeout time.Duration
+	Uri     string
+
+	RetryCount         int
+	RetryInterval      time.Duration
+	InsecureSkipVerify bool
+
+	MaxRetries    int
+	ResetDuration time.Duration
+	SECRET_KEY    string
+}
 type Client struct {
-	apiClient *APIClient
-	opts      *domain.OptionsSt
+	apiClient *httpclient.APIClient
+	config    *ConfigSt
 }
 
-func New(opts *domain.OptionsSt, cb *CircuitBreaker) (*Client, error) {
-	apiClient, err := NewAPIClient(opts.Uri, opts, cb)
+func New(cfg *ConfigSt) (*Client, error) {
+	opts := &httpclient.OptionsSt{
+		Timeout: cfg.Timeout,
+
+		RetryCount:    cfg.RetryCount,
+		RetryInterval: cfg.RetryInterval,
+
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+	}
+	opts.Normalize()
+	cb := httpclient.NewCircuitBreaker(
+		cfg.MaxRetries,
+		cfg.ResetDuration,
+	)
+	apiClient, err := httpclient.NewAPIClient(cfg.Uri, opts, cb)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API client: %w", err)
 	}
-
 	return &Client{
 		apiClient: apiClient,
-		opts:      opts,
+		config:    cfg,
 	}, nil
 }
 
 func (c *Client) GetFinalPriceInfo(ctx context.Context, reqObj *domain.ImportModelReq) ([]*domain.ImportModelRep, error) {
 	data := domain.SubdivisionGetInfoReq{}
 	data.Encode(reqObj)
-	now := time.Now()
-	fmt.Println("Process batch:", now.Format(time.RFC3339))
 	req, err := c.apiClient.NewRequest(http.MethodPost, PathOperationsSync).
 		WithQueryParam("operation", "Shop.GetProductInfo").
 		WithQueryParam("endpointId", "MECHTA").
 		WithJSONBody(data).
 		WithContext(ctx).
-		WithHeader("Authorization", "Mindbox secretKey=\"MECHTA_INTERNSHIP_API_KEY\"").
+		WithHeader("Authorization", fmt.Sprintf("Mindbox secretKey=\"%s\"", c.config.SECRET_KEY)).
 		Build()
 	if err != nil {
 		return nil, err
@@ -56,7 +78,6 @@ func (c *Client) GetFinalPriceInfo(ctx context.Context, reqObj *domain.ImportMod
 		return nil, fmt.Errorf("failed to get price info: %w", err)
 	}
 
-	fmt.Println("Processed batch:", time.Since(now))
 	if repObj.Status != StatusSuccess {
 		return nil, errors.New("bad status")
 	}
@@ -117,7 +138,10 @@ func (c *Client) GetExportData(ctx context.Context, operation string) (*domain.P
 
 func (c *Client) startExport(ctx context.Context, operation string) (string, error) {
 	req, err := c.apiClient.NewRequest(http.MethodPost, PathOperationsSync).
-		WithQueryParam("operation", operation).Build()
+		WithQueryParam("operation", operation).
+		WithContext(ctx).
+		WithJSONBody(nil).
+		Build()
 	if err != nil {
 		return "", err
 	}
@@ -175,18 +199,15 @@ func (c *Client) checkExportStatus(ctx context.Context, operation, exportID stri
 }
 
 func (c *Client) fetchExportData(ctx context.Context, fileURL string) (*domain.PromotionsGetInfoRepSt, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	req, err := c.apiClient.NewRequest(http.MethodGet, fileURL).
+		WithContext(ctx).
+		Build()
 	if err != nil {
 		return nil, err
 	}
-
 	var result domain.PromotionsGetInfoRepSt
 	if err := c.apiClient.Execute(ctx, req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
-
-
-// конвеер паттерн
-// паттерны работы многопоточности

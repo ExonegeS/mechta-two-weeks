@@ -1,30 +1,8 @@
 package domain
 
 import (
-	"net/http"
-	"net/url"
 	"time"
 )
-
-type OptionsSt struct {
-	Timeout time.Duration
-	Uri     string
-	Params  url.Values
-	Headers http.Header
-
-	RetryCount         int
-	RetryInterval      time.Duration
-	InsecureSkipVerify bool
-}
-
-func (o *OptionsSt) Normalize() {
-	if o.Timeout == 0 {
-		o.Timeout = 15 * time.Second
-	}
-	if o.RetryCount < 0 {
-		o.RetryCount = 0
-	}
-}
 
 // SubdivisionGetInfo
 

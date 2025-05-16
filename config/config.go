@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type (
@@ -15,24 +17,29 @@ type (
 	}
 
 	Server struct {
-		Address string
-		Port    string
+		Address  string
+		Port     string
+		GRPCPort string
 	}
 
 	WorkerConfig struct {
-		MaxWorkers      int64
-		RateLimitPerSec int64
-		BatchSize       int64
+		MaxWorkers int64
+		BatchSize  int64
 	}
 
 	ExternalService struct {
-		Host    string
-		Port    string
-		Timeout time.Duration
+		URI       string
+		Timeout   time.Duration
+		SecretKey string
 	}
 )
 
-func NewConfig() *Config {
+func NewConfig(filename string) *Config {
+	if filename != "" {
+		if err := godotenv.Load(filename); err != nil {
+			panic(fmt.Errorf("error loading '%s' (.env) file: %w", filename, err))
+		}
+	}
 	return &Config{
 		Server{
 			Address:  getEnvStr("ADDRESS", ""),
@@ -40,24 +47,15 @@ func NewConfig() *Config {
 			GRPCPort: getEnvStr("GRPC_PORT", "50051"),
 		},
 		WorkerConfig{
-			MaxWorkers:      getEnvInt64("MAX_WORKERS", 3),
-			RateLimitPerSec: getEnvInt64("RATE_LIMIT", 5),
-			BatchSize:       getEnvInt64("BATCH_SIZE", 3000),
+			MaxWorkers: getEnvInt64("MAX_WORKERS", 3),
+			BatchSize:  getEnvInt64("BATCH_SIZE", 3000),
 		},
 		ExternalService{
-			Host:    getEnvStr("SERVER_HOST", "http://localhost"),
-			Port:    getEnvStr("SERVER_PORT", "6969"),
-			Timeout: time.Duration(getEnvInt64("SERVER_TIMEOUT", 3)) * time.Second,
+			URI:       mustEnvStr("URI"),
+			Timeout:   time.Duration(getEnvInt64("SERVER_TIMEOUT", 120)) * time.Second,
+			SecretKey: mustEnvStr("SECRET_KEY"),
 		},
 	}
-}
-
-func (s *ExternalService) MakeAddressString() string {
-	return fmt.Sprintf(
-		"%s:%s",
-		s.Host,
-		s.Port,
-	)
 }
 
 func getEnvStr(key, fallback string) string {
@@ -65,6 +63,14 @@ func getEnvStr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func mustEnvStr(key string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		panic(fmt.Errorf("environment variable '%s' not set", key))
+	}
+	return value
 }
 
 func getEnvInt64(key string, fallback int64) int64 {

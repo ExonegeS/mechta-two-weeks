@@ -8,6 +8,7 @@ option go_package = "internal/adapters/inbound/grpc;grpc";
 
 service MindboxService {
   rpc GetFinalPriceInfo(GetFinalPriceInfoRequest) returns (GetFinalPriceInfoResponse);
+  rpc GetPromotionsInfo(Empty) returns (GetPromoInfoResponse);
 }
 
 message Item {
@@ -41,12 +42,6 @@ message ImportModel {
     repeated PromoPlaceholder PromoPlaceholder = 3;
 }
 
-message Category {
-  string id = 1;
-  string name = 2;
-  string description = 3;
-}
-
 // Request/Response messages
 message GetFinalPriceInfoRequest {
   string id = 1;
@@ -61,3 +56,11 @@ message GetFinalPriceInfoResponse {
   repeated ImportModel processed = 5;
   repeated Item failed = 6;
 }
+
+message GetPromoInfoResponse {
+  int32 total_promotions = 1;
+  string process_duration = 2;
+  repeated Promo Promotions = 3;
+}
+
+message Empty {}

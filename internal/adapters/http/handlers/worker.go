@@ -13,6 +13,7 @@ import (
 
 type WorkerService interface {
 	GetData(ctx context.Context, subdivisionId string, calculationTime time.Time, products []*domain.BasePrice) ([]*domain.ImportModelRep, []*domain.BasePrice, error)
+	GetPromotionsInfo(ctx context.Context) ([]*domain.ImportPromotionsRep, error)
 }
 
 type WorkerHandler struct {
@@ -31,54 +32,30 @@ func NewWorkerHandler(logger *slog.Logger, workerService WorkerService) *WorkerH
 
 func (h *WorkerHandler) RegisterEndpoints(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", h.RootFunc)
-	// mux.HandleFunc("GET /hello", h.HelloFunc)
-	// mux.HandleFunc("GET /err", h.ErrorFunc)
 	mux.HandleFunc("GET /data/{id}", h.GetData)
-	// id подразделения, массив структур base price
-	// record timeSince
-	//
+	mux.HandleFunc("GET /promotions", h.GetPromotionsInfo)
 }
 
 func (h *WorkerHandler) RootFunc(w http.ResponseWriter, r *http.Request) {
-	const op = "WorkerHandler.RootFunc"
-
-	err := fmt.Errorf("endpoint not found: %v", r.URL.Path)
-	if err != nil {
-		h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
-		utils.WriteError(w, http.StatusNotFound, fmt.Errorf("endpoint not found"))
-		return
+	type request struct {
+		Endpoint string `json:"endpoint"`
+		Body     string `json:"body"`
 	}
-
-	utils.WriteJSON(w, http.StatusOK, map[string]any{})
+	type response struct {
+		API []request `json:"api"`
+	}
+	utils.WriteJSON(w, http.StatusOK, response{
+		API: []request{
+			{
+				Endpoint: "/data/{id}",
+				Body:     "{item_list: [{product_id: string, price: numeric}]}",
+			},
+			{
+				Endpoint: "/promotions",
+			},
+		},
+	})
 }
-
-// func (h *WorkerHandler) HelloFunc(w http.ResponseWriter, r *http.Request) {
-// 	// const op = "WorkerHandler.HelloFunc"
-// 	// var err error
-
-// 	// if err != nil {
-// 	// 	h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
-// 	// 	utils.WriteError(w, http.StatusNotImplemented, fmt.Errorf("not implemented"))
-// 	// 	return
-// 	// }
-
-// 	utils.WriteJSON(w, http.StatusOK, map[string]any{
-// 		"message": "Hello world!",
-// 	})
-// }
-
-// func (h *WorkerHandler) ErrorFunc(w http.ResponseWriter, r *http.Request) {
-// 	const op = "WorkerHandler.ErrorFunc"
-
-// 	err := fmt.Errorf("not implemented")
-// 	if err != nil {
-// 		h.logger.Error("HandlerError", slog.String("operation", op), slog.String("error", err.Error()))
-// 		utils.WriteError(w, http.StatusNotImplemented, fmt.Errorf("not implemented"))
-// 		return
-// 	}
-
-// 	utils.WriteJSON(w, http.StatusOK, map[string]any{})
-// }
 
 func (h *WorkerHandler) GetData(w http.ResponseWriter, r *http.Request) {
 	const op = "WorkerHandler.GetData"
@@ -98,7 +75,7 @@ func (h *WorkerHandler) GetData(w http.ResponseWriter, r *http.Request) {
 		Items []*struct {
 			ProductId string  `json:"product_id"`
 			Price     float64 `json:"price"`
-		} `json:"item_list"`
+		} `json:"items"`
 	}
 	var req request
 	err := utils.ParseJSON(r, &req)
@@ -129,7 +106,6 @@ func (h *WorkerHandler) GetData(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("cannot access data with id %s", id))
 		return
 	}
-	fmt.Printf("max: %v items/hour\nsucceeded: %v items/hour\n", float64(len(items))/time.Since(start).Hours(), float64(len(data))/time.Since(start).Hours())
 	utils.WriteJSON(w, http.StatusOK, struct {
 		ID              string `json:"id"`
 		TotalProcessed  int    `json:"total_processed"`
@@ -145,5 +121,61 @@ func (h *WorkerHandler) GetData(w http.ResponseWriter, r *http.Request) {
 		Processed:       data,
 		Failed:          failed,
 		ProcessDuration: time.Since(start).String(),
+	})
+}
+
+func (h *WorkerHandler) GetPromotionsInfo(w http.ResponseWriter, r *http.Request) {
+	const op = "WorkerHandler.GetPromotionsInfo"
+
+	h.logger.Debug("Semaphore acquired")
+	h.semaphore <- struct{}{}
+	defer func() {
+		<-h.semaphore
+		h.logger.Debug("Semaphore released")
+	}()
+
+	start := time.Now()
+	data, err := h.workerService.GetPromotionsInfo(
+		r.Context(),
+	)
+	if err != nil {
+		h.logger.Error("HandlerError",
+			slog.String("operation", op),
+			slog.String("error", err.Error()))
+		utils.WriteError(w, http.StatusInternalServerError,
+			fmt.Errorf("cannot access PromotionsInfo data"))
+		return
+	}
+
+	type Promotion struct {
+		ExternalID string `json:"external_id"`
+		Name       string `json:"name"`
+		SchemaID   string `json:"schema_id"`
+		StartDate  string `json:"start_date"`
+		EndDate    string `json:"end_date"`
+	}
+
+	type response struct {
+		TotalPromotions int          `json:"total_promotions"`
+		ProcessDuration string       `json:"process_duration"`
+		Promotions      []*Promotion `json:"promotions"`
+	}
+
+	resp := make([]*Promotion, len(data))
+
+	for i, promo := range data {
+		resp[i] = &Promotion{
+			ExternalID: promo.ExternalID,
+			Name:       promo.Name,
+			SchemaID:   promo.SchemaID,
+			StartDate:  promo.StartDate.Format(time.RFC3339),
+			EndDate:    promo.EndDate.Format(time.RFC3339),
+		}
+	}
+
+	utils.WriteJSON(w, http.StatusOK, response{
+		ProcessDuration: time.Since(start).String(),
+		TotalPromotions: len(data),
+		Promotions:      resp,
 	})
 }

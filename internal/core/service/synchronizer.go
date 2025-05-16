@@ -45,7 +45,6 @@ func (s *SyncService) GetData(
 	calculationTime time.Time,
 	products []*domain.BasePrice,
 ) (processed []*domain.ImportModelRep, failed []*domain.BasePrice, err error) {
-	// limiter := rate.NewLimiter(rate.Limit(s.cfg.RateLimitPerSec), 3)
 
 	batchSize := int(s.cfg.BatchSize)
 	if batchSize < 1 {
@@ -66,17 +65,12 @@ func (s *SyncService) GetData(
 		go func() {
 			defer wg.Done()
 			for req := range jobs {
-				// if err := limiter.Wait(ctx); err != nil {
-				// 	results <- Result{Req: req, Err: err}
-				// 	continue
-				// }
-
 				data, err := s.entityDataAPI.GetFinalPriceInfo(ctx, req)
 				if err != nil {
 					results <- Result{Req: req, Err: err}
 					continue
 				}
-				results <- Result{Data: data, Err: err}
+				results <- Result{Data: data, Err: nil}
 			}
 		}()
 	}
@@ -118,4 +112,10 @@ func (s *SyncService) GetData(
 	}
 
 	return processed, failed, nil
+}
+
+func (s *SyncService) GetPromotionsInfo(
+	ctx context.Context,
+) ([]*domain.ImportPromotionsRep, error) {
+	return s.entityDataAPI.GetPromotionsInfo(ctx)
 }

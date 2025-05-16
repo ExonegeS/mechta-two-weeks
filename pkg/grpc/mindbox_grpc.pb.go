@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	MindboxService_GetFinalPriceInfo_FullMethodName = "/mindbox.MindboxService/GetFinalPriceInfo"
+	MindboxService_GetPromotionsInfo_FullMethodName = "/mindbox.MindboxService/GetPromotionsInfo"
 )
 
 // MindboxServiceClient is the client API for MindboxService service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MindboxServiceClient interface {
 	GetFinalPriceInfo(ctx context.Context, in *GetFinalPriceInfoRequest, opts ...grpc.CallOption) (*GetFinalPriceInfoResponse, error)
+	GetPromotionsInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GetPromoInfoResponse, error)
 }
 
 type mindboxServiceClient struct {
@@ -47,11 +49,22 @@ func (c *mindboxServiceClient) GetFinalPriceInfo(ctx context.Context, in *GetFin
 	return out, nil
 }
 
+func (c *mindboxServiceClient) GetPromotionsInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GetPromoInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPromoInfoResponse)
+	err := c.cc.Invoke(ctx, MindboxService_GetPromotionsInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MindboxServiceServer is the server API for MindboxService service.
 // All implementations must embed UnimplementedMindboxServiceServer
 // for forward compatibility.
 type MindboxServiceServer interface {
 	GetFinalPriceInfo(context.Context, *GetFinalPriceInfoRequest) (*GetFinalPriceInfoResponse, error)
+	GetPromotionsInfo(context.Context, *Empty) (*GetPromoInfoResponse, error)
 	mustEmbedUnimplementedMindboxServiceServer()
 }
 
@@ -64,6 +77,9 @@ type UnimplementedMindboxServiceServer struct{}
 
 func (UnimplementedMindboxServiceServer) GetFinalPriceInfo(context.Context, *GetFinalPriceInfoRequest) (*GetFinalPriceInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFinalPriceInfo not implemented")
+}
+func (UnimplementedMindboxServiceServer) GetPromotionsInfo(context.Context, *Empty) (*GetPromoInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPromotionsInfo not implemented")
 }
 func (UnimplementedMindboxServiceServer) mustEmbedUnimplementedMindboxServiceServer() {}
 func (UnimplementedMindboxServiceServer) testEmbeddedByValue()                        {}
@@ -104,6 +120,24 @@ func _MindboxService_GetFinalPriceInfo_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MindboxService_GetPromotionsInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MindboxServiceServer).GetPromotionsInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MindboxService_GetPromotionsInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MindboxServiceServer).GetPromotionsInfo(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MindboxService_ServiceDesc is the grpc.ServiceDesc for MindboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +148,10 @@ var MindboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetFinalPriceInfo",
 			Handler:    _MindboxService_GetFinalPriceInfo_Handler,
+		},
+		{
+			MethodName: "GetPromotionsInfo",
+			Handler:    _MindboxService_GetPromotionsInfo_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

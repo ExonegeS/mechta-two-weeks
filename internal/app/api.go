@@ -8,11 +8,10 @@ import (
 
 	"github.com/ExonegeS/mechta-two-weeks/config"
 	"github.com/ExonegeS/mechta-two-weeks/internal/adapters/grpc"
+	"github.com/ExonegeS/mechta-two-weeks/internal/adapters/http/handlers"
+	"github.com/ExonegeS/mechta-two-weeks/internal/adapters/http/middleware"
 	mind_box "github.com/ExonegeS/mechta-two-weeks/internal/adapters/mindbox"
-	"github.com/ExonegeS/mechta-two-weeks/internal/core/domain"
 	"github.com/ExonegeS/mechta-two-weeks/internal/core/service"
-	"github.com/ExonegeS/mechta-two-weeks/internal/ports/http/handlers"
-	"github.com/ExonegeS/mechta-two-weeks/internal/ports/http/middleware"
 )
 
 type APIServer struct {
@@ -30,14 +29,20 @@ func NewAPIServer(config *config.Config, logger *slog.Logger) *APIServer {
 func (s *APIServer) Run() error {
 	mux := http.NewServeMux()
 
-	opts := &domain.OptionsSt{
+	cfg := &mind_box.ConfigSt{
 		Timeout:            s.cfg.ExternalService.Timeout,
-		Uri:                s.cfg.ExternalService.MakeAddressString(),
+		Uri:                s.cfg.ExternalService.URI,
 		RetryCount:         5,
+		RetryInterval:      5 * time.Second,
 		InsecureSkipVerify: false,
+
+		MaxRetries:    5,
+		ResetDuration: 15 * time.Second,
+
+		SECRET_KEY: s.cfg.ExternalService.SecretKey,
 	}
 
-	entityProvider, err := mind_box.New(opts, mind_box.NewCircuitBreaker(5, 15*time.Second))
+	entityProvider, err := mind_box.New(cfg)
 	if err != nil {
 		return err
 	}
